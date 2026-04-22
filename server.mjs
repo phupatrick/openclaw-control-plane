@@ -204,4 +204,5 @@ if (!process.env.VERCEL && path.resolve(process.argv[1] || "") === __filename) {
   });
 }
 
+export default handleRequest;
 export { handleRequest, server };
