@@ -198,7 +198,7 @@ function loadEnvFile(filePath) {
   }
 }
 
-if (path.resolve(process.argv[1] || "") === __filename) {
+if (!process.env.VERCEL && path.resolve(process.argv[1] || "") === __filename) {
   server.listen(config.port, () => {
     console.log(`OpenClaw Control Plane is running at http://localhost:${config.port}`);
   });
