@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node server.mjs",
     "dev": "node --watch server.mjs",
-    "test": "node test/control-plane.test.mjs"
+    "test": "node test/control-plane.test.mjs",
+    "telegram:webhook:set": "node scripts/telegram-openclaw-webhook.mjs",
+    "telegram:webhook:delete": "node scripts/telegram-openclaw-webhook.mjs --delete"
   },
   "dependencies": {
     "@neondatabase/serverless": "^1.0.2"
