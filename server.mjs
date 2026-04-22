@@ -4,7 +4,9 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createControlPlane } from "./src/control-plane.mjs";
+import { createAssistantRouter } from "./src/assistant-router.mjs";
 import { createOrchestrator } from "./src/orchestrator.mjs";
+import { createTelegramAssistant } from "./src/telegram-assistant.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -33,6 +35,26 @@ const config = {
     || envFromFile.OPENCLAW_STORE_TOKEN
     || process.env.OPENCLAW_CONTROL_TOKEN
     || envFromFile.OPENCLAW_CONTROL_TOKEN
+    || "",
+  telegramAssistantToken:
+    process.env.OPENCLAW_TELEGRAM_BOT_TOKEN
+    || envFromFile.OPENCLAW_TELEGRAM_BOT_TOKEN
+    || "",
+  telegramAssistantOwnerUserIds:
+    process.env.OPENCLAW_TELEGRAM_OWNER_USER_IDS
+    || envFromFile.OPENCLAW_TELEGRAM_OWNER_USER_IDS
+    || "",
+  telegramAssistantAllowedChatIds:
+    process.env.OPENCLAW_TELEGRAM_ALLOWED_CHAT_IDS
+    || envFromFile.OPENCLAW_TELEGRAM_ALLOWED_CHAT_IDS
+    || "",
+  telegramAssistantWebhookPath:
+    process.env.OPENCLAW_TELEGRAM_WEBHOOK_PATH
+    || envFromFile.OPENCLAW_TELEGRAM_WEBHOOK_PATH
+    || "/api/telegram/openclaw/webhook",
+  telegramAssistantWebhookSecret:
+    process.env.OPENCLAW_TELEGRAM_WEBHOOK_SECRET
+    || envFromFile.OPENCLAW_TELEGRAM_WEBHOOK_SECRET
     || ""
 };
 
@@ -52,6 +74,15 @@ const orchestrator = createOrchestrator({
   storeUrl: config.storeUrl,
   storeToken: config.storeToken
 });
+const assistantRouter = createAssistantRouter({ orchestrator });
+const telegramAssistant = createTelegramAssistant({
+  token: config.telegramAssistantToken,
+  assistant: assistantRouter,
+  ownerUserIds: config.telegramAssistantOwnerUserIds,
+  allowedChatIds: config.telegramAssistantAllowedChatIds,
+  botName: "OpenClaw"
+});
+const TELEGRAM_ASSISTANT_WEBHOOK_PATH = normalizeWebhookPath(config.telegramAssistantWebhookPath);
 
 const server = createServer(handleRequest);
 
@@ -93,6 +124,10 @@ async function handleRequest(req, res) {
 
     if ((method === "GET" || method === "HEAD" || method === "POST") && pathname === "/api/openclaw/orchestrate") {
       return handleOrchestrateRequest(req, res, requestUrl, method);
+    }
+
+    if (method === "POST" && pathname === TELEGRAM_ASSISTANT_WEBHOOK_PATH) {
+      return handleTelegramAssistantWebhook(req, res);
     }
 
     return sendJson(res, 404, { error: "Not found." });
@@ -195,9 +230,35 @@ async function handleOrchestrateRequest(req, res, requestUrl, method) {
       return sendJson(res, 200, { ok: true, data: await orchestrator.runStoreAdmin(body) });
     }
 
+    if (action === "assistant") {
+      return sendJson(res, 200, { ok: true, data: await assistantRouter.handle(body) });
+    }
+
     return sendJson(res, 400, { error: "Unsupported orchestrate action." });
   } catch (error) {
     return sendJson(res, 400, { error: error.message || "OpenClaw orchestrate request failed." });
+  }
+}
+
+async function handleTelegramAssistantWebhook(req, res) {
+  if (!config.telegramAssistantToken) {
+    return sendJson(res, 503, { error: "OPENCLAW_TELEGRAM_BOT_TOKEN is not configured." });
+  }
+
+  if (config.telegramAssistantWebhookSecret) {
+    const suppliedSecret = String(req.headers["x-telegram-bot-api-secret-token"] || "").trim();
+    if (!suppliedSecret || suppliedSecret !== config.telegramAssistantWebhookSecret) {
+      return sendJson(res, 403, { error: "Forbidden." });
+    }
+  }
+
+  try {
+    const update = await readJsonBody(req);
+    await telegramAssistant.handleUpdate(update);
+    return sendJson(res, 200, { ok: true });
+  } catch (error) {
+    console.error("[openclaw-telegram-assistant]", error.message || error);
+    return sendJson(res, 200, { ok: false, error: error.message || "Webhook processing failed." });
   }
 }
 
@@ -266,6 +327,15 @@ function loadEnvFile(filePath) {
   } catch {
     return {};
   }
+}
+
+function normalizeWebhookPath(value) {
+  const normalized = String(value || "").trim();
+  if (!normalized) {
+    return "/api/telegram/openclaw/webhook";
+  }
+
+  return normalized.startsWith("/") ? normalized : `/${normalized}`;
 }
 
 if (!process.env.VERCEL && path.resolve(process.argv[1] || "") === __filename) {
