@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createControlPlane } from "./src/control-plane.mjs";
+import { createOrchestrator } from "./src/orchestrator.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -16,7 +17,23 @@ const config = {
   controlPath: process.env.OPENCLAW_CONTROL_PATH || envFromFile.OPENCLAW_CONTROL_PATH || "data/openclaw-control-plane.json",
   controlToken: process.env.OPENCLAW_CONTROL_TOKEN || envFromFile.OPENCLAW_CONTROL_TOKEN || "",
   workerHeartbeatSeconds: Number(process.env.OPENCLAW_WORKER_HEARTBEAT_SECONDS || envFromFile.OPENCLAW_WORKER_HEARTBEAT_SECONDS || 120),
-  jobLeaseSeconds: Number(process.env.OPENCLAW_JOB_LEASE_SECONDS || envFromFile.OPENCLAW_JOB_LEASE_SECONDS || 90)
+  jobLeaseSeconds: Number(process.env.OPENCLAW_JOB_LEASE_SECONDS || envFromFile.OPENCLAW_JOB_LEASE_SECONDS || 90),
+  defaultWorkerId: process.env.OPENCLAW_DEFAULT_WORKER_ID || envFromFile.OPENCLAW_DEFAULT_WORKER_ID || "",
+  defaultWorkerLabel: process.env.OPENCLAW_DEFAULT_WORKER_LABEL || envFromFile.OPENCLAW_DEFAULT_WORKER_LABEL || "Vostro",
+  sellerUrl: process.env.OPENCLAW_SELLER_URL || envFromFile.OPENCLAW_SELLER_URL || "",
+  sellerToken:
+    process.env.OPENCLAW_SELLER_TOKEN
+    || envFromFile.OPENCLAW_SELLER_TOKEN
+    || process.env.OPENCLAW_CONTROL_TOKEN
+    || envFromFile.OPENCLAW_CONTROL_TOKEN
+    || "",
+  storeUrl: process.env.OPENCLAW_STORE_URL || envFromFile.OPENCLAW_STORE_URL || "",
+  storeToken:
+    process.env.OPENCLAW_STORE_TOKEN
+    || envFromFile.OPENCLAW_STORE_TOKEN
+    || process.env.OPENCLAW_CONTROL_TOKEN
+    || envFromFile.OPENCLAW_CONTROL_TOKEN
+    || ""
 };
 
 const controlPlane = createControlPlane({
@@ -24,6 +41,16 @@ const controlPlane = createControlPlane({
   databaseUrl: config.databaseUrl,
   heartbeatTimeoutSeconds: config.workerHeartbeatSeconds,
   defaultJobLeaseSeconds: config.jobLeaseSeconds
+});
+const orchestrator = createOrchestrator({
+  controlPlane,
+  controlToken: config.controlToken,
+  defaultWorkerId: config.defaultWorkerId,
+  defaultWorkerLabel: config.defaultWorkerLabel,
+  sellerUrl: config.sellerUrl,
+  sellerToken: config.sellerToken,
+  storeUrl: config.storeUrl,
+  storeToken: config.storeToken
 });
 
 const server = createServer(handleRequest);
@@ -62,6 +89,10 @@ async function handleRequest(req, res) {
 
     if ((method === "GET" || method === "HEAD" || method === "POST") && pathname === "/api/openclaw/control") {
       return handleControlRequest(req, res, requestUrl, method);
+    }
+
+    if ((method === "GET" || method === "HEAD" || method === "POST") && pathname === "/api/openclaw/orchestrate") {
+      return handleOrchestrateRequest(req, res, requestUrl, method);
     }
 
     return sendJson(res, 404, { error: "Not found." });
@@ -128,6 +159,45 @@ async function handleControlRequest(req, res, requestUrl, method) {
     return sendJson(res, 400, { error: "Unsupported action." });
   } catch (error) {
     return sendJson(res, 400, { error: error.message || "Control plane request failed." });
+  }
+}
+
+async function handleOrchestrateRequest(req, res, requestUrl, method) {
+  if (!config.controlToken) {
+    return sendJson(res, 503, { error: "OPENCLAW_CONTROL_TOKEN is not configured." });
+  }
+
+  if (!isAuthorized(req)) {
+    return sendJson(res, 401, { error: "Unauthorized." });
+  }
+
+  if (method === "GET" || method === "HEAD") {
+    return sendJson(res, 200, { ok: true, data: await orchestrator.getSystemSummary() });
+  }
+
+  try {
+    const body = await readJsonBody(req);
+    const action = String(body.action || "").trim().toLowerCase();
+
+    if (action === "worker-shell") {
+      return sendJson(res, 200, { ok: true, data: await orchestrator.createWorkerShellJob(body) });
+    }
+
+    if (action === "seller-command") {
+      return sendJson(res, 200, { ok: true, data: await orchestrator.runSellerCommand(body) });
+    }
+
+    if (action === "seller-allow-chat") {
+      return sendJson(res, 200, { ok: true, data: await orchestrator.allowSellerChat(body) });
+    }
+
+    if (action === "store-admin") {
+      return sendJson(res, 200, { ok: true, data: await orchestrator.runStoreAdmin(body) });
+    }
+
+    return sendJson(res, 400, { error: "Unsupported orchestrate action." });
+  } catch (error) {
+    return sendJson(res, 400, { error: error.message || "OpenClaw orchestrate request failed." });
   }
 }
 
