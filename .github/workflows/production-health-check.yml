@@ -1,0 +1,25 @@
+name: OpenClaw Production Health Check
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openclaw-production-health
+  cancel-in-progress: false
+
+jobs:
+  health:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+
+    steps:
+      - name: Check OpenClaw production health
+        env:
+          OPENCLAW_HEALTH_URL: https://openclaw-control-plane.vercel.app/api/health
+          OPENCLAW_EXPECTED_MODEL: openai-codex/gpt-5.4
+        run: node scripts/production-health-check.mjs
